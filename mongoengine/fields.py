@@ -307,8 +307,13 @@ class ListField(BaseField):
                 for value in value_list:
                     # Dereference DBRefs
                     if isinstance(value, (pymongo.dbref.DBRef)):
-                        value = _get_db().dereference(value)
-                        deref_list.append(referenced_type._from_son(value))
+                        deref_value = _get_db().dereference(value)
+                        if deref_value:
+                            deref_list.append(referenced_type._from_son(deref_value))
+                        else:
+                            # ignore objects that can't be dereferenced
+                            # but warn the user something went wrong
+                            warnings.warn(u"object " + unicode(value) + " can not be dereferenced. Maybe it has been deleted from the database")
                     else:
                         deref_list.append(value)
                 instance._data[self.name] = deref_list
@@ -463,9 +468,26 @@ class ReferenceField(BaseField):
                                       'they have been saved to the database')
         else:
             id_ = document
+            
+            if hasattr(id_, "id"):
+                # resolve id if this is not a Document 
+                # but an object with an id field
+                id_ = id_.id
+                
+    	    id_ = id_field.to_mongo(id_)
 
-        id_ = id_field.to_mongo(id_)
+	    # use collection specified while defining the ReferenceField as default
         collection = self.document_type._meta['collection']
+        # however if a inherited class is assigned with a custom collection
+        # the above will fail because it does not respect the custom collection
+        # use the collection sepcified in the actual object instead
+        # or if this is already a DBRef containing a id and a collection,
+        # reuse the existing information
+        if isinstance(document, Document):
+            collection = document._meta.get("collection", collection)
+        elif isinstance(document, pymongo.dbref.DBRef):
+            collection = document.collection
+            
         return pymongo.dbref.DBRef(collection, id_)
 
     def prepare_query_value(self, op, value):
